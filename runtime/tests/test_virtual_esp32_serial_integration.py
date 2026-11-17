@@ -33,8 +33,8 @@ def virtual_serial_pair():
     )
     thread = threading.Thread(target=sim.run, name="virtual-esp32", daemon=True)
     thread.start()
-    # Allow handshake/telemetry to start.
-    time.sleep(0.3)
+    # Allow the simulator to open its PTY end and begin handshake retries.
+    time.sleep(0.5)
     yield pair, sim
     sim._running = False  # noqa: SLF001
     thread.join(timeout=2.0)

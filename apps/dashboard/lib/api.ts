@@ -82,25 +82,4 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ device_id: deviceId }),
     }),
-  emergencyStop: (deviceId?: string) =>
-    request<{
-      status: string;
-      stopped: string[];
-      skipped?: Array<{ device_id: string; reason: string }>;
-      message: string;
-      emergency_stopped: boolean;
-    }>("/api/hardware/emergency-stop", {
-      method: "POST",
-      body: JSON.stringify({ device_id: deviceId ?? null }),
-    }),
-  clearEmergencyStop: (deviceId: string) =>
-    request<{
-      status: string;
-      cleared: string[];
-      message: string;
-      emergency_stopped: boolean;
-    }>("/api/hardware/clear-emergency-stop", {
-      method: "POST",
-      body: JSON.stringify({ device_id: deviceId }),
-    }),
 };

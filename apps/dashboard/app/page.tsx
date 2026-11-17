@@ -30,7 +30,6 @@ export default function OverviewPage() {
   const [health, setHealth] = useState<DeviceHealth | null>(null);
   const [meta, setMeta] = useState<RuntimeMeta | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
   const selectedIdRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -119,43 +118,6 @@ export default function OverviewPage() {
   }, [selectedId]);
 
   const telemetry = live.telemetry ?? health?.latest_telemetry ?? null;
-  const emergencyStopped = Boolean(
-    health?.emergency_stopped || telemetry?.emergency_stopped,
-  );
-
-  async function onToggleEmergencyStop() {
-    if (!primary) return;
-    setBusy(true);
-    setError(null);
-    try {
-      if (emergencyStopped) {
-        const result = await api.clearEmergencyStop(primary.id);
-        if (result.emergency_stopped) {
-          setError(result.message || "Failed to clear emergency stop");
-        }
-      } else {
-        if (!connected) {
-          await api.connect(primary.id);
-          await refresh();
-        }
-        const result = await api.emergencyStop(primary.id);
-        if (!result.stopped?.length) {
-          setError(result.message || "Emergency stop had no effect");
-        }
-      }
-      await refresh();
-    } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : emergencyStopped
-            ? "Failed to clear emergency stop"
-            : "Emergency stop failed",
-      );
-    } finally {
-      setBusy(false);
-    }
-  }
 
   return (
     <div className="space-y-5">
@@ -195,50 +157,12 @@ export default function OverviewPage() {
           >
             Refresh
           </button>
-          <button
-            type="button"
-            disabled={!primary || busy}
-            onClick={() => void onToggleEmergencyStop()}
-            className={
-              emergencyStopped
-                ? "rounded border border-emerald-400 bg-emerald-50 px-3 py-1.5 text-sm font-medium text-emerald-900 hover:bg-emerald-100 disabled:opacity-50"
-                : "rounded border border-red-300 bg-red-50 px-3 py-1.5 text-sm font-medium text-red-800 hover:bg-red-100 disabled:opacity-50"
-            }
-          >
-            {busy
-              ? emergencyStopped
-                ? "Clearing…"
-                : "Stopping…"
-              : emergencyStopped
-                ? "Clear emergency stop"
-                : "Emergency stop"}
-          </button>
         </div>
       </div>
 
       {error ? (
         <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
           {error}
-        </div>
-      ) : null}
-
-      {emergencyStopped ? (
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-red-400 bg-red-100 px-4 py-3 text-sm text-red-950">
-          <div>
-            <div className="font-semibold tracking-wide">Emergency stop: ENGAGED</div>
-            <p className="mt-1">
-              Motors are idle and motion is blocked. Press{" "}
-              <strong>Clear emergency stop</strong> to resume.
-            </p>
-          </div>
-          <button
-            type="button"
-            disabled={busy || !primary}
-            onClick={() => void onToggleEmergencyStop()}
-            className="rounded border border-emerald-500 bg-white px-3 py-1.5 text-sm font-medium text-emerald-900 hover:bg-emerald-50 disabled:opacity-50"
-          >
-            Clear emergency stop
-          </button>
         </div>
       ) : null}
 
@@ -319,12 +243,6 @@ export default function OverviewPage() {
                 Live stream
               </h2>
               <dl className="space-y-3 text-sm">
-                <div className="flex justify-between gap-3">
-                  <dt className="text-zinc-500">E-stop</dt>
-                  <dd className="font-mono">
-                    {emergencyStopped ? "ENGAGED" : "clear"}
-                  </dd>
-                </div>
                 <div className="flex justify-between gap-3">
                   <dt className="text-zinc-500">Mode</dt>
                   <dd className="font-mono">

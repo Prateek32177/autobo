@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -215,10 +216,38 @@ class DeviceRegistry:
         if not deleted:
             raise KeyError(f"Device not found: {device_id}")
 
+    def _serial_port_owner(self, port: str, *, excluding: str | None = None) -> str | None:
+        """Return device_id already using this serial port, if any."""
+        try:
+            target = os.path.realpath(port)
+        except OSError:
+            target = port
+        for did, adapter in self._adapters.items():
+            if excluding is not None and did == excluding:
+                continue
+            other_port = getattr(adapter, "port", None)
+            if not other_port:
+                continue
+            try:
+                other = os.path.realpath(other_port)
+            except OSError:
+                other = other_port
+            if other == target:
+                return did
+        return None
+
     async def connect_device(self, device_id: str) -> Device:
         device = await self.get_device(device_id)
-        if device_id in self._adapters and await self._adapters[device_id].is_connected():
+        existing = self._adapters.get(device_id)
+        if existing is not None and await existing.is_connected():
             return device
+        # Drop a stale adapter left after communication loss.
+        if existing is not None:
+            self._adapters.pop(device_id, None)
+            try:
+                await existing.disconnect()
+            except Exception:  # noqa: BLE001
+                pass
 
         if device.connection.type == ConnectionType.SIMULATION:
             adapter: HardwareAdapter = MockHardwareAdapter(
@@ -231,6 +260,13 @@ class DeviceRegistry:
         else:
             if not device.connection.port:
                 raise ValueError("Serial connection requires a port")
+            owner = self._serial_port_owner(device.connection.port, excluding=device_id)
+            if owner is not None:
+                raise ValueError(
+                    f"Serial port {device.connection.port} is already in use by '{owner}'. "
+                    "Only one device can own a PTY/USB port. Disconnect that device first, "
+                    "or use a separate Virtual ESP32 pair for a second rover."
+                )
             adapter = Esp32HardwareAdapter(
                 device_id=device_id,
                 port=device.connection.port,
@@ -450,6 +486,7 @@ class DeviceRegistry:
         await self._broadcast({"type": "telemetry", **payload, "received_at": now})
 
     async def _handle_disconnect(self, device_id: str) -> None:
+        adapter = self._adapters.pop(device_id, None)
         await self.db.update_device_status(
             device_id,
             connectivity_status=ConnectivityStatus.DISCONNECTED.value,
@@ -464,6 +501,11 @@ class DeviceRegistry:
                 "reason": "communication_lost",
             }
         )
+        if adapter is not None:
+            try:
+                await adapter.disconnect()
+            except Exception:  # noqa: BLE001
+                pass
 
     async def _persist_component_metadata(self, device_id: str) -> None:
         now = _utcnow().isoformat()

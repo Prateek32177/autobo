@@ -17,9 +17,10 @@ class LinkedPtyPair:
     - Host / ``SerialHardwareAdapter`` opens ``host_port``
     - Virtual ESP32 opens ``device_port``
 
-    Masters are bridged; slave FDs are retained as holders so macOS accepts
-    writes to a master before/after a client opens the peer (no EIO). Clients
-    may still open the same slave paths (verified with pyserial on Darwin).
+    Masters are bridged. Slave FDs are retained as holders so macOS accepts
+    master writes before a client attaches. Only **one** RDWR client may open
+    each end (enforced by SerialTransport exclusive=True + registry port check);
+    a second opener corrupts JSON Lines.
     """
 
     host_port: str
@@ -65,7 +66,6 @@ def open_linked_pty_pair() -> LinkedPtyPair:
                 try:
                     data = os.read(src, 4096)
                 except OSError:
-                    # Client hangup / transient error — keep pair for reconnect.
                     continue
                 if not data:
                     continue

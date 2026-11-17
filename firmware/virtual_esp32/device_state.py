@@ -111,6 +111,8 @@ class DeviceState:
             self.stop_motors()
         if self.host_silent_ms() > watchdog_ms:
             self.stop_motors(emergency=True)
+        # Gentle drain so idle telemetry visibly changes (uptime also changes).
+        self.battery_voltage = max(6.0, round(self.battery_voltage - 0.00002, 5))
 
     def effective_distance(self) -> float | None:
         if self.sensor_failed:

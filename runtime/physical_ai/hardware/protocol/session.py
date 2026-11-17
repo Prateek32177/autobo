@@ -63,6 +63,8 @@ class ProtocolSession:
         self._on_disconnect: Callable[[], Awaitable[None]] | None = None
         self._running = False
         self._loss_notified = False
+        self._keepalive_task: asyncio.Task[None] | None = None
+        self._keepalive_interval_s = 1.0
 
     @property
     def handshake(self) -> ProtocolHandshake | None:
@@ -91,9 +93,19 @@ class ProtocolSession:
         self._running = True
         self._loss_notified = False
         self._reader_task = asyncio.create_task(self._read_loop(), name="protocol-session")
+        self._keepalive_task = asyncio.create_task(
+            self._keepalive_loop(), name="protocol-keepalive"
+        )
 
     async def stop(self) -> None:
         self._running = False
+        if self._keepalive_task is not None:
+            self._keepalive_task.cancel()
+            try:
+                await self._keepalive_task
+            except asyncio.CancelledError:
+                pass
+            self._keepalive_task = None
         if self._reader_task is not None:
             self._reader_task.cancel()
             try:
@@ -112,6 +124,27 @@ class ProtocolSession:
                 )
         self._pending.clear()
         await self.transport.disconnect()
+
+    async def _keepalive_loop(self) -> None:
+        """Refresh the device host-watchdog with periodic handshake_ack frames."""
+        while self._running:
+            try:
+                await asyncio.sleep(self._keepalive_interval_s)
+                hs = self._handshake
+                if hs is None or not self._running:
+                    continue
+                await self._send_model(
+                    ProtocolHandshakeAck(
+                        device_id=hs.device_id,
+                        protocol_version=self.expected_protocol_version,
+                        status="accepted",
+                    )
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001
+                # Keepalive failures are non-fatal; read loop owns disconnect.
+                continue
 
     async def perform_handshake(self, timeout: float = 5.0) -> ProtocolHandshake:
         """Wait for device handshake and acknowledge compatible protocol version."""

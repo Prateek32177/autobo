@@ -74,6 +74,8 @@ Open the dashboard Devices page — the device must show **serial** (`is_simulat
 
 PTY bridge and simulator double-fork into the background; PIDs live under `.run/`.
 
+**Important:** one Virtual ESP32 PTY pair supports **one** connected serial device. Registering several “Virtual Rover” rows that all use `.run/ttyVESP32-host` will fail the second connect (port in use) and used to corrupt the first session. For two serial rovers, run two independent PTY/simulator pairs on different ports.
+
 ## Shutdown
 
 ```bash

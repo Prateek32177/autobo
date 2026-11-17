@@ -391,11 +391,16 @@ class VirtualEsp32:
             return
         if self.config.scenario == Scenario.HEARTBEAT_TIMEOUT:
             return
-        # If the host went silent (closed serial), require a fresh handshake.
-        if self.state.host_silent_ms() > max(2000, self.config.watchdog_ms // 2):
+        # Host keepalive (handshake_ack) refreshes touch_host. If the host closes
+        # the PTY, silence returns and we require a fresh handshake on reconnect.
+        if self._handshake_acked and self.state.host_silent_ms() > max(
+            2500, self.config.watchdog_ms // 2
+        ):
             self._handshake_acked = False
         if not self._handshake_acked:
             self._send_handshake()
+            self._send_heartbeat()
+            return
         self._send_heartbeat()
         if self.config.scenario != Scenario.STALE_TELEMETRY:
             self._send_telemetry()

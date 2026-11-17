@@ -31,13 +31,32 @@ class SerialTransport(TransportAdapter):
             raise TransportError("pyserial is required for SerialTransport") from exc
 
         def _open() -> Any:
-            return serial.Serial(self.port, self.baud_rate, timeout=self.read_timeout)
+            # exclusive=True prevents a second adapter from silently sharing a PTY/USB port.
+            try:
+                return serial.Serial(
+                    self.port,
+                    self.baud_rate,
+                    timeout=self.read_timeout,
+                    exclusive=True,
+                )
+            except TypeError:
+                # Older pyserial without exclusive=
+                return serial.Serial(self.port, self.baud_rate, timeout=self.read_timeout)
 
         try:
             self._serial = await asyncio.to_thread(_open)
         except Exception as exc:
             self._state = TransportState.ERROR
             raise TransportError(f"Failed to open serial port {self.port}: {exc}") from exc
+
+        def _flush() -> None:
+            try:
+                self._serial.reset_input_buffer()
+                self._serial.reset_output_buffer()
+            except Exception:  # noqa: BLE001
+                pass
+
+        await asyncio.to_thread(_flush)
         self._state = TransportState.CONNECTED
 
     async def disconnect(self) -> None:

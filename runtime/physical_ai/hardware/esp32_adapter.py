@@ -62,7 +62,7 @@ class Esp32HardwareAdapter(HardwareAdapter):
         await self._session.start()
         if not self.skip_handshake:
             try:
-                await self._session.perform_handshake(timeout=5.0)
+                await self._session.perform_handshake(timeout=8.0)
             except ProtocolSessionError:
                 await self.disconnect()
                 raise
