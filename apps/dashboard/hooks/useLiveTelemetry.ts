@@ -19,6 +19,11 @@ export function useLiveTelemetry(deviceId: string | null) {
   const wsRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
+    setTelemetry(null);
+    setLastHeartbeatAt(null);
+    setEventCount(0);
+    setConnected(false);
+
     if (!deviceId) return;
 
     let cancelled = false;
@@ -50,6 +55,29 @@ export function useLiveTelemetry(deviceId: string | null) {
           setEventCount((n) => n + 1);
           if (payload.type === "telemetry") {
             setTelemetry(payload as unknown as TelemetrySnapshot);
+          }
+          if (payload.type === "emergency_stop") {
+            setTelemetry(
+              (prev) =>
+                ({
+                  ...(prev || {}),
+                  device_id: deviceId,
+                  emergency_stopped: true,
+                  stopped: true,
+                  motor_status: { left: "idle", right: "idle" },
+                }) as TelemetrySnapshot,
+            );
+          }
+          if (payload.type === "emergency_stop_cleared") {
+            setTelemetry(
+              (prev) =>
+                ({
+                  ...(prev || {}),
+                  device_id: deviceId,
+                  emergency_stopped: false,
+                  stopped: false,
+                }) as TelemetrySnapshot,
+            );
           }
           if (payload.type === "heartbeat") {
             setLastHeartbeatAt(

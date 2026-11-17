@@ -354,6 +354,39 @@ class DeviceRegistry:
             "emergency_stopped": bool(stopped),
         }
 
+    async def clear_emergency_stop(self, device_id: str) -> dict[str, Any]:
+        await self.get_device(device_id)
+        adapter = self._adapters.get(device_id)
+        if adapter is None or not await adapter.is_connected():
+            raise RuntimeError(
+                f"Cannot clear emergency stop: device '{device_id}' is not connected."
+            )
+        await adapter.clear_emergency_stop()
+        self._emergency_stopped.discard(device_id)
+        latest = dict(self._latest_telemetry.get(device_id) or {})
+        latest.update(
+            {
+                "emergency_stopped": False,
+                "stopped": False,
+            }
+        )
+        self._latest_telemetry[device_id] = latest
+        payload = {
+            "type": "emergency_stop_cleared",
+            "device_id": device_id,
+            "device_ids": [device_id],
+            "status": "ok",
+            "message": f"Emergency stop cleared for {device_id}",
+            "emergency_stopped": False,
+        }
+        await self._broadcast(payload)
+        return {
+            "status": "ok",
+            "cleared": [device_id],
+            "message": payload["message"],
+            "emergency_stopped": False,
+        }
+
     async def invoke_capability(
         self,
         device_id: str,

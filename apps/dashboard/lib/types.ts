@@ -67,6 +67,7 @@ export interface DeviceHealth {
   last_heartbeat_at: string | null;
   is_simulation: boolean;
   connection_mode: ConnectionType;
+  emergency_stopped?: boolean;
   components: Array<{
     id: string;
     name: string;

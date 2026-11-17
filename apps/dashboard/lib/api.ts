@@ -93,4 +93,14 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ device_id: deviceId ?? null }),
     }),
+  clearEmergencyStop: (deviceId: string) =>
+    request<{
+      status: string;
+      cleared: string[];
+      message: string;
+      emergency_stopped: boolean;
+    }>("/api/hardware/clear-emergency-stop", {
+      method: "POST",
+      body: JSON.stringify({ device_id: deviceId }),
+    }),
 };

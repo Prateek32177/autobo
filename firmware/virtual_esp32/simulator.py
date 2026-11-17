@@ -284,8 +284,23 @@ class VirtualEsp32:
         if self._drop_results:
             return
 
-        if action in {"stop", "emergency_stop"}:
-            self.state.stop_motors(emergency=(action == "emergency_stop"))
+        if action == "stop":
+            # Explicit stop is the operator reset: clear latch and idle motors.
+            self.state.clear_emergency()
+            self.state.stop_motors(emergency=False)
+            self._send_model(
+                ProtocolCommandResult(
+                    command_id=command_id,
+                    status=ResultStatus.COMPLETED,
+                    left_encoder_delta=0,
+                    right_encoder_delta=0,
+                    message="stop:latch_cleared",
+                )
+            )
+            self._send_telemetry()
+            return
+        if action == "emergency_stop":
+            self.state.stop_motors(emergency=True)
             self._send_model(
                 ProtocolCommandResult(
                     command_id=command_id,
@@ -294,6 +309,7 @@ class VirtualEsp32:
                     right_encoder_delta=0,
                 )
             )
+            self._send_telemetry()
             return
 
         if action == "read_distance":

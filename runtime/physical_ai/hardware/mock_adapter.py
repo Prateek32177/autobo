@@ -114,6 +114,27 @@ class MockHardwareAdapter(HardwareAdapter):
         await self.component_registry.dispatch_telemetry(self.device_id, snap)
         await self._emit_telemetry(snap)
 
+    async def clear_emergency_stop(self) -> None:
+        from contracts.protocol import CommandAction, ProtocolCommand
+
+        self._stopped = False
+        if self._peer is not None:
+            self._peer._stopped = False  # noqa: SLF001
+        if self._session is not None and self._connected:
+            await self._session.send_command(
+                ProtocolCommand(
+                    command_id="clear-estop",
+                    action=CommandAction.STOP,
+                    parameters={},
+                )
+            )
+        snap = self.snapshot()
+        snap = {k: v for k, v in snap.items() if v is not None}
+        snap["emergency_stopped"] = False
+        snap["stopped"] = False
+        await self.component_registry.dispatch_telemetry(self.device_id, snap)
+        await self._emit_telemetry(snap)
+
     async def _on_protocol_heartbeat(self, message: ProtocolHeartbeat) -> None:
         payload = message.model_dump()
         payload["mode"] = self.mode

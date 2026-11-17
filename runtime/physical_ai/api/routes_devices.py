@@ -49,7 +49,7 @@ async def device_health(device_id: str, registry: RegistryDep) -> dict:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     telemetry = registry.get_latest_telemetry(device_id)
     emergency_stopped = device.id in registry._emergency_stopped or bool(
-        (telemetry or {}).get("emergency_stopped") or (telemetry or {}).get("stopped")
+        (telemetry or {}).get("emergency_stopped")
     )
     return {
         "device_id": device.id,

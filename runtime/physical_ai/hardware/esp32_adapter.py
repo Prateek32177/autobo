@@ -93,6 +93,19 @@ class Esp32HardwareAdapter(HardwareAdapter):
         if self._session is not None:
             await self._session.emergency_stop(reason)
 
+    async def clear_emergency_stop(self) -> None:
+        from contracts.protocol import CommandAction, ProtocolCommand
+
+        if not self._connected or self._session is None:
+            return
+        await self._session.send_command(
+            ProtocolCommand(
+                command_id="clear-estop",
+                action=CommandAction.STOP,
+                parameters={},
+            )
+        )
+
     async def _on_protocol_heartbeat(self, message: ProtocolHeartbeat) -> None:
         payload = message.model_dump()
         payload["mode"] = self.mode

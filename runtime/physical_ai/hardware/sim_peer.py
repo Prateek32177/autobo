@@ -121,7 +121,8 @@ class SimulatedEsp32Peer:
         if action in ("stop", "emergency_stop"):
             self._motor_left = "idle"
             self._motor_right = "idle"
-            self._stopped = True
+            # emergency_stop latches; plain stop clears the latch (operator reset).
+            self._stopped = action == "emergency_stop"
             await self._write(
                 ProtocolCommandResult(
                     command_id=command.command_id,

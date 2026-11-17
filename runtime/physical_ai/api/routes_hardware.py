@@ -89,3 +89,20 @@ async def emergency_stop(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+class ClearEmergencyStopRequest(BaseModel):
+    device_id: str = Field(min_length=1)
+
+
+@router.post("/clear-emergency-stop")
+async def clear_emergency_stop(
+    payload: ClearEmergencyStopRequest,
+    registry: RegistryDep,
+) -> dict:
+    try:
+        return await registry.clear_emergency_stop(payload.device_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc

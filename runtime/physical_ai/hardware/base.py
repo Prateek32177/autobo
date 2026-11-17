@@ -51,6 +51,10 @@ class HardwareAdapter(ABC):
     async def emergency_stop(self, reason: str = "operator") -> None:
         ...
 
+    async def clear_emergency_stop(self) -> None:
+        """Operator reset: clear host/device e-stop latch via an explicit stop command."""
+        return None
+
     def on_telemetry(self, handler: TelemetryHandler) -> None:
         self._telemetry_handler = handler
 

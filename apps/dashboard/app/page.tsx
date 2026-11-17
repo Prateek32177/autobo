@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ComponentTable } from "@/components/ComponentTable";
 import { MetricCard } from "@/components/MetricCard";
@@ -11,17 +11,57 @@ import { api } from "@/lib/api";
 import { formatMetric, relativeTime } from "@/lib/format";
 import type { DeviceHealth, DeviceSummary, RuntimeMeta } from "@/lib/types";
 
+const SELECTED_DEVICE_KEY = "physical_ai_overview_device_id";
+
+function pickDefaultDeviceId(devices: DeviceSummary[], preferred: string | null): string | null {
+  if (preferred && devices.some((d) => d.id === preferred)) return preferred;
+  const connectedSerial = devices.find(
+    (d) => d.connectivity_status === "connected" && d.connection_type === "serial",
+  );
+  if (connectedSerial) return connectedSerial.id;
+  const connected = devices.find((d) => d.connectivity_status === "connected");
+  if (connected) return connected.id;
+  return devices[0]?.id ?? null;
+}
+
 export default function OverviewPage() {
   const [devices, setDevices] = useState<DeviceSummary[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [health, setHealth] = useState<DeviceHealth | null>(null);
   const [meta, setMeta] = useState<RuntimeMeta | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [estopMessage, setEstopMessage] = useState<string | null>(null);
+  const selectedIdRef = useRef<string | null>(null);
 
-  const primary = devices[0] ?? null;
+  useEffect(() => {
+    try {
+      const stored = window.localStorage.getItem(SELECTED_DEVICE_KEY);
+      if (stored) {
+        selectedIdRef.current = stored;
+        setSelectedId(stored);
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const primary = useMemo(
+    () => devices.find((d) => d.id === selectedId) ?? null,
+    [devices, selectedId],
+  );
   const live = useLiveTelemetry(primary?.id ?? null);
   const connected = primary?.connectivity_status === "connected";
+
+  const selectDevice = useCallback((deviceId: string) => {
+    selectedIdRef.current = deviceId;
+    setSelectedId(deviceId);
+    setHealth(null);
+    try {
+      window.localStorage.setItem(SELECTED_DEVICE_KEY, deviceId);
+    } catch {
+      // ignore
+    }
+  }, []);
 
   const refresh = useCallback(async () => {
     try {
@@ -32,8 +72,21 @@ export default function OverviewPage() {
       ]);
       setDevices(deviceList);
       setMeta(runtimeMeta);
-      if (deviceList[0]) {
-        const h = await api.getHealth(deviceList[0].id);
+
+      const nextId = pickDefaultDeviceId(deviceList, selectedIdRef.current);
+      if (nextId && nextId !== selectedIdRef.current) {
+        selectedIdRef.current = nextId;
+        setSelectedId(nextId);
+        try {
+          window.localStorage.setItem(SELECTED_DEVICE_KEY, nextId);
+        } catch {
+          // ignore
+        }
+      }
+
+      const activeId = nextId;
+      if (activeId) {
+        const h = await api.getHealth(activeId);
         setHealth(h);
       } else {
         setHealth(null);
@@ -49,32 +102,56 @@ export default function OverviewPage() {
     return () => clearInterval(timer);
   }, [refresh]);
 
+  useEffect(() => {
+    if (!selectedId) return;
+    let cancelled = false;
+    void api
+      .getHealth(selectedId)
+      .then((h) => {
+        if (!cancelled) setHealth(h);
+      })
+      .catch(() => {
+        /* refresh loop will surface errors */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedId]);
+
   const telemetry = live.telemetry ?? health?.latest_telemetry ?? null;
   const emergencyStopped = Boolean(
-    telemetry?.emergency_stopped || telemetry?.stopped || estopMessage,
+    health?.emergency_stopped || telemetry?.emergency_stopped,
   );
 
-  async function onEmergencyStop() {
+  async function onToggleEmergencyStop() {
     if (!primary) return;
     setBusy(true);
     setError(null);
     try {
-      if (!connected) {
-        // Auto-reconnect simulated/physical session so e-stop can actually command hardware.
-        await api.connect(primary.id);
-        await refresh();
-      }
-      const result = await api.emergencyStop(primary.id);
-      if (!result.stopped?.length) {
-        setError(result.message || "Emergency stop had no effect");
-        setEstopMessage(null);
+      if (emergencyStopped) {
+        const result = await api.clearEmergencyStop(primary.id);
+        if (result.emergency_stopped) {
+          setError(result.message || "Failed to clear emergency stop");
+        }
       } else {
-        setEstopMessage(result.message || "Emergency stop engaged");
+        if (!connected) {
+          await api.connect(primary.id);
+          await refresh();
+        }
+        const result = await api.emergencyStop(primary.id);
+        if (!result.stopped?.length) {
+          setError(result.message || "Emergency stop had no effect");
+        }
       }
       await refresh();
     } catch (err) {
-      setEstopMessage(null);
-      setError(err instanceof Error ? err.message : "Emergency stop failed");
+      setError(
+        err instanceof Error
+          ? err.message
+          : emergencyStopped
+            ? "Failed to clear emergency stop"
+            : "Emergency stop failed",
+      );
     } finally {
       setBusy(false);
     }
@@ -86,10 +163,27 @@ export default function OverviewPage() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Overview</h1>
           <p className="mt-1 text-sm text-zinc-600">
-            Live component health and sample telemetry from the local runtime.
+            Live component health and telemetry for the selected device.
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {devices.length > 0 ? (
+            <label className="flex items-center gap-2 text-sm text-zinc-600">
+              <span className="whitespace-nowrap">Device</span>
+              <select
+                className="max-w-[18rem] rounded border border-zinc-300 bg-white px-2 py-1.5 text-sm font-medium text-zinc-900"
+                value={primary?.id ?? ""}
+                onChange={(event) => selectDevice(event.target.value)}
+              >
+                {devices.map((device) => (
+                  <option key={device.id} value={device.id}>
+                    {device.name} · {device.connection_type} ·{" "}
+                    {device.connectivity_status}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
           <StatusBadge
             label="WS"
             status={live.connected ? "healthy" : "disconnected"}
@@ -104,10 +198,20 @@ export default function OverviewPage() {
           <button
             type="button"
             disabled={!primary || busy}
-            onClick={() => void onEmergencyStop()}
-            className="rounded border border-red-300 bg-red-50 px-3 py-1.5 text-sm font-medium text-red-800 hover:bg-red-100 disabled:opacity-50"
+            onClick={() => void onToggleEmergencyStop()}
+            className={
+              emergencyStopped
+                ? "rounded border border-emerald-400 bg-emerald-50 px-3 py-1.5 text-sm font-medium text-emerald-900 hover:bg-emerald-100 disabled:opacity-50"
+                : "rounded border border-red-300 bg-red-50 px-3 py-1.5 text-sm font-medium text-red-800 hover:bg-red-100 disabled:opacity-50"
+            }
           >
-            {busy ? "Stopping…" : "Emergency stop"}
+            {busy
+              ? emergencyStopped
+                ? "Clearing…"
+                : "Stopping…"
+              : emergencyStopped
+                ? "Clear emergency stop"
+                : "Emergency stop"}
           </button>
         </div>
       </div>
@@ -119,19 +223,29 @@ export default function OverviewPage() {
       ) : null}
 
       {emergencyStopped ? (
-        <div className="rounded-md border border-red-400 bg-red-100 px-4 py-3 text-sm text-red-950">
-          <div className="font-semibold tracking-wide">Emergency stop engaged</div>
-          <p className="mt-1">
-            {estopMessage ||
-              "Motors commanded to idle. Motion commands remain blocked until the simulated peer clears the stop latch (reconnect clears it)."}
-          </p>
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-red-400 bg-red-100 px-4 py-3 text-sm text-red-950">
+          <div>
+            <div className="font-semibold tracking-wide">Emergency stop: ENGAGED</div>
+            <p className="mt-1">
+              Motors are idle and motion is blocked. Press{" "}
+              <strong>Clear emergency stop</strong> to resume.
+            </p>
+          </div>
+          <button
+            type="button"
+            disabled={busy || !primary}
+            onClick={() => void onToggleEmergencyStop()}
+            className="rounded border border-emerald-500 bg-white px-3 py-1.5 text-sm font-medium text-emerald-900 hover:bg-emerald-50 disabled:opacity-50"
+          >
+            Clear emergency stop
+          </button>
         </div>
       ) : null}
 
       {primary && !connected && !error ? (
         <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
-          Device is <strong>disconnected</strong>. Emergency stop will reconnect
-          first, then issue the stop command.
+          Device is <strong>disconnected</strong>. Connect it on the Devices page
+          before expecting live telemetry or motion.
         </div>
       ) : null}
 
@@ -151,8 +265,8 @@ export default function OverviewPage() {
             mode={health?.connection_mode || primary.connection_type}
             note={
               primary.is_simulation
-                ? "Simulated rover seeded by the runtime. Interfaces match the future ESP32 serial adapter."
-                : undefined
+                ? "MockHardwareAdapter seed — not the Virtual ESP32 serial path."
+                : "Serial path (Virtual ESP32 or physical board) via SerialHardwareAdapter."
             }
           />
 
@@ -171,7 +285,11 @@ export default function OverviewPage() {
               label="Battery"
               value={formatMetric(telemetry?.battery_voltage)}
               unit="V"
-              hint="Simulated drain + ripple"
+              hint={
+                primary.is_simulation
+                  ? "Simulated drain + ripple"
+                  : "From serial telemetry"
+              }
             />
             <MetricCard
               label="Distance"
@@ -209,7 +327,9 @@ export default function OverviewPage() {
                 </div>
                 <div className="flex justify-between gap-3">
                   <dt className="text-zinc-500">Mode</dt>
-                  <dd className="font-mono">{telemetry?.mode || "simulation"}</dd>
+                  <dd className="font-mono">
+                    {telemetry?.mode || primary.connection_type}
+                  </dd>
                 </div>
                 <div className="flex justify-between gap-3">
                   <dt className="text-zinc-500">Uptime</dt>

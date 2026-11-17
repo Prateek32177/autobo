@@ -161,8 +161,18 @@ void handleCommand(JsonDocument &doc) {
   result["type"] = "command_result";
   result["command_id"] = command_id;
 
-  if (strcmp(action, "stop") == 0 || strcmp(action, "emergency_stop") == 0) {
-    stopMotors(action, strcmp(action, "emergency_stop") == 0);
+  if (strcmp(action, "stop") == 0) {
+    // Explicit stop is the operator reset: clear latch and idle motors.
+    emergency_stopped = false;
+    stopMotors("stop", false);
+    result["status"] = "completed";
+    result["left_encoder_delta"] = 0;
+    result["right_encoder_delta"] = 0;
+    sendJson(result);
+    return;
+  }
+  if (strcmp(action, "emergency_stop") == 0) {
+    stopMotors("emergency_stop", true);
     result["status"] = "completed";
     result["left_encoder_delta"] = 0;
     result["right_encoder_delta"] = 0;
