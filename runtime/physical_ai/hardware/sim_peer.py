@@ -247,6 +247,7 @@ class SimulatedEsp32Peer:
             motor_status={"left": self._motor_left, "right": self._motor_right},
             uptime_ms=uptime_ms,
             firmware_version=self.firmware_version,
+            emergency_stopped=self._stopped,
         )
 
     async def _write(self, model: Any) -> None:

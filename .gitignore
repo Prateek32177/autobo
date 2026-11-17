@@ -37,3 +37,8 @@ firmware/**/.vscode/
 # Misc
 *.log
 .turbo/
+.run/
+logs/
+
+# Local app data
+data/

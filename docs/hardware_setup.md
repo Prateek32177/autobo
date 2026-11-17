@@ -1,25 +1,51 @@
 # Hardware setup
 
-## Milestone 1
+## Start without hardware
 
-No physical hardware is required. The runtime seeds a **simulated** rover:
+The application starts in **simulation** by default. No ESP32 is required.
 
-- Device ID: `rover-sim-001`
-- Connection type: `simulation`
-- Components: ESP32 controller, distance sensor, left/right motors, encoders, battery
+```bash
+./scripts/setup.sh
+./scripts/start.sh
+```
 
-## Milestone 2+ (preview)
+## Milestone 2 preparation (ESP32)
 
-Planned initial rover stack:
+When you are ready to test physical hardware:
+
+### Dependencies
+
+- `pyserial` (installed with the runtime)
+- PlatformIO CLI (for build/upload)
+- USB serial permission on your OS (macOS: usually automatic; Linux: dialout group)
+
+### Firmware
+
+```bash
+cd firmware/esp32
+pio run
+pio run -t upload
+pio device monitor -b 115200
+```
+
+Protocol: [firmware_protocol.md](firmware_protocol.md)
+
+### Runtime connection (when board is attached)
+
+1. `GET /api/hardware/ports` or dashboard Settings → serial port count / note.
+2. Register a device with `connection.type=serial` and the listed port.
+3. `POST /api/hardware/connect` with that `device_id`.
+
+The app must still start if no ports exist.
+
+## Planned hardware bill of materials
 
 - ESP32 development board
-- Dual DC geared motors + compatible motor driver
+- Dual DC geared motors + driver
 - Wheel encoders
 - Distance sensor
 - Battery voltage measurement
 - Laptop webcam (camera)
 - Physical power switch and emergency stop
-
-USB serial at **115200** baud using the JSON Lines protocol documented in [firmware_protocol.md](firmware_protocol.md).
 
 Do not purchase a Raspberry Pi until the laptop + ESP32 loop is validated.

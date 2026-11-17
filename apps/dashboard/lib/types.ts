@@ -90,6 +90,8 @@ export interface TelemetrySnapshot {
   firmware_version?: string;
   mode?: string;
   received_at?: string;
+  emergency_stopped?: boolean;
+  stopped?: boolean;
 }
 
 export interface RuntimeMeta {
@@ -97,5 +99,8 @@ export interface RuntimeMeta {
   hardware_modes: string[];
   serial_ready: boolean;
   ai_ready: boolean;
+  llm_configured?: boolean;
+  architecture?: Record<string, boolean>;
+  features?: Record<string, boolean>;
   note: string;
 }

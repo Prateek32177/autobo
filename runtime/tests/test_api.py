@@ -98,7 +98,27 @@ async def test_emergency_stop(client: AsyncClient) -> None:
         json={"device_id": "rover-sim-001"},
     )
     assert response.status_code == 200
-    assert "rover-sim-001" in response.json()["stopped"]
+    body = response.json()
+    assert "rover-sim-001" in body["stopped"]
+    assert body["emergency_stopped"] is True
+    health = await client.get("/api/devices/rover-sim-001/health")
+    assert health.json()["emergency_stopped"] is True
+    assert health.json()["latest_telemetry"]["emergency_stopped"] is True
+
+
+@pytest.mark.asyncio
+async def test_emergency_stop_requires_connection(client: AsyncClient) -> None:
+    await client.post(
+        "/api/hardware/disconnect",
+        json={"device_id": "rover-sim-001"},
+    )
+    response = await client.post(
+        "/api/hardware/emergency-stop",
+        json={"device_id": "rover-sim-001"},
+    )
+    assert response.status_code == 409
+    assert "not connected" in response.json()["detail"].lower()
+
 
 
 @pytest.mark.asyncio

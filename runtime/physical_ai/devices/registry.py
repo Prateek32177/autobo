@@ -65,6 +65,7 @@ class DeviceRegistry:
         self.mock_interval_seconds = 1.0
         self._adapters: dict[str, HardwareAdapter] = {}
         self._latest_telemetry: dict[str, dict[str, Any]] = {}
+        self._emergency_stopped: set[str] = set()
         self._event_subscribers: list[Any] = []
 
     def subscribe(self, callback: Any) -> None:
@@ -247,6 +248,7 @@ class DeviceRegistry:
         except (TransportError, ProtocolSessionError, OSError) as exc:
             raise ConnectionError(str(exc)) from exc
         self._adapters[device_id] = adapter
+        self._emergency_stopped.discard(device_id)
         await self.db.update_device_status(
             device_id,
             connectivity_status=ConnectivityStatus.CONNECTED.value,
@@ -293,15 +295,64 @@ class DeviceRegistry:
         return self._latest_telemetry.get(device_id)
 
     async def emergency_stop(self, device_id: str | None = None) -> dict[str, Any]:
-        targets = [device_id] if device_id else list(self._adapters.keys())
+        if device_id is not None:
+            # Ensure the device exists.
+            await self.get_device(device_id)
+            targets = [device_id]
+        else:
+            targets = list(self._adapters.keys())
+
         stopped: list[str] = []
+        skipped: list[dict[str, str]] = []
         for did in targets:
             adapter = self._adapters.get(did)
-            if adapter is not None:
-                await adapter.emergency_stop("api")
-                stopped.append(did)
-        await self._broadcast({"type": "emergency_stop", "device_ids": stopped})
-        return {"stopped": stopped}
+            if adapter is None or not await adapter.is_connected():
+                skipped.append(
+                    {
+                        "device_id": did,
+                        "reason": "not_connected",
+                    }
+                )
+                continue
+            await adapter.emergency_stop("api")
+            self._emergency_stopped.add(did)
+            latest = dict(self._latest_telemetry.get(did) or {})
+            latest.update(
+                {
+                    "emergency_stopped": True,
+                    "stopped": True,
+                    "motor_status": {"left": "idle", "right": "idle"},
+                }
+            )
+            self._latest_telemetry[did] = latest
+            stopped.append(did)
+
+        if device_id is not None and not stopped:
+            raise RuntimeError(
+                f"Emergency stop had no effect: device '{device_id}' is not connected. "
+                "Connect the device first (Devices → Connect), then press Emergency stop."
+            )
+
+        payload = {
+            "type": "emergency_stop",
+            "device_ids": stopped,
+            "skipped": skipped,
+            "status": "ok" if stopped else "noop",
+            "message": (
+                f"Emergency stop engaged for {', '.join(stopped)}"
+                if stopped
+                else "No connected devices to stop"
+            ),
+            "emergency_stopped": True,
+        }
+        await self._broadcast(payload)
+        return {
+            "status": "ok",
+            "stopped": stopped,
+            "skipped": skipped,
+            "message": payload["message"],
+            "emergency_stopped": bool(stopped),
+        }
 
     async def invoke_capability(
         self,

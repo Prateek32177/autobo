@@ -39,7 +39,7 @@ class EncoderComponent(ComponentAdapter):
         ]
 
     async def ingest_telemetry(self, payload: dict[str, Any]) -> ComponentObservation | None:
-        if self.telemetry_field not in payload:
+        if payload.get(self.telemetry_field) is None:
             return None
         ticks = int(payload[self.telemetry_field])
         delta = 0 if self._previous_ticks is None else ticks - self._previous_ticks

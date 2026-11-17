@@ -22,7 +22,7 @@ class BatteryComponent(ComponentAdapter):
         ]
 
     async def ingest_telemetry(self, payload: dict[str, Any]) -> ComponentObservation | None:
-        if "battery_voltage" not in payload:
+        if payload.get("battery_voltage") is None:
             return None
         voltage = float(payload["battery_voltage"])
         obs = self._observe({"battery_voltage": voltage}, raw=payload)

@@ -17,9 +17,11 @@ export default function OverviewPage() {
   const [meta, setMeta] = useState<RuntimeMeta | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [estopMessage, setEstopMessage] = useState<string | null>(null);
 
   const primary = devices[0] ?? null;
   const live = useLiveTelemetry(primary?.id ?? null);
+  const connected = primary?.connectivity_status === "connected";
 
   const refresh = useCallback(async () => {
     try {
@@ -48,14 +50,30 @@ export default function OverviewPage() {
   }, [refresh]);
 
   const telemetry = live.telemetry ?? health?.latest_telemetry ?? null;
+  const emergencyStopped = Boolean(
+    telemetry?.emergency_stopped || telemetry?.stopped || estopMessage,
+  );
 
   async function onEmergencyStop() {
     if (!primary) return;
     setBusy(true);
+    setError(null);
     try {
-      await api.emergencyStop(primary.id);
+      if (!connected) {
+        // Auto-reconnect simulated/physical session so e-stop can actually command hardware.
+        await api.connect(primary.id);
+        await refresh();
+      }
+      const result = await api.emergencyStop(primary.id);
+      if (!result.stopped?.length) {
+        setError(result.message || "Emergency stop had no effect");
+        setEstopMessage(null);
+      } else {
+        setEstopMessage(result.message || "Emergency stop engaged");
+      }
       await refresh();
     } catch (err) {
+      setEstopMessage(null);
       setError(err instanceof Error ? err.message : "Emergency stop failed");
     } finally {
       setBusy(false);
@@ -89,7 +107,7 @@ export default function OverviewPage() {
             onClick={() => void onEmergencyStop()}
             className="rounded border border-red-300 bg-red-50 px-3 py-1.5 text-sm font-medium text-red-800 hover:bg-red-100 disabled:opacity-50"
           >
-            Emergency stop
+            {busy ? "Stopping…" : "Emergency stop"}
           </button>
         </div>
       </div>
@@ -97,9 +115,23 @@ export default function OverviewPage() {
       {error ? (
         <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
           {error}
-          <div className="mt-1 text-xs opacity-80">
-            Is the runtime running on http://127.0.0.1:8000?
-          </div>
+        </div>
+      ) : null}
+
+      {emergencyStopped ? (
+        <div className="rounded-md border border-red-400 bg-red-100 px-4 py-3 text-sm text-red-950">
+          <div className="font-semibold tracking-wide">Emergency stop engaged</div>
+          <p className="mt-1">
+            {estopMessage ||
+              "Motors commanded to idle. Motion commands remain blocked until the simulated peer clears the stop latch (reconnect clears it)."}
+          </p>
+        </div>
+      ) : null}
+
+      {primary && !connected && !error ? (
+        <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+          Device is <strong>disconnected</strong>. Emergency stop will reconnect
+          first, then issue the stop command.
         </div>
       ) : null}
 
@@ -169,6 +201,12 @@ export default function OverviewPage() {
                 Live stream
               </h2>
               <dl className="space-y-3 text-sm">
+                <div className="flex justify-between gap-3">
+                  <dt className="text-zinc-500">E-stop</dt>
+                  <dd className="font-mono">
+                    {emergencyStopped ? "ENGAGED" : "clear"}
+                  </dd>
+                </div>
                 <div className="flex justify-between gap-3">
                   <dt className="text-zinc-500">Mode</dt>
                   <dd className="font-mono">{telemetry?.mode || "simulation"}</dd>

@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
+import { BackendStatus } from "@/components/BackendStatus";
+
 const NAV = [
   { href: "/", label: "Overview" },
   { href: "/devices", label: "Devices" },
@@ -26,8 +28,11 @@ export function Shell({ children }: { children: React.ReactNode }) {
               Developer Dashboard
             </div>
           </div>
-          <div className="rounded border border-zinc-200 bg-zinc-50 px-2.5 py-1 text-xs font-medium text-zinc-600">
-            Milestone 1 · Local runtime
+          <div className="flex items-center gap-2">
+            <BackendStatus />
+            <div className="rounded border border-zinc-200 bg-zinc-50 px-2.5 py-1 text-xs font-medium text-zinc-600">
+              Local · Milestone 2
+            </div>
           </div>
         </div>
         <nav className="mx-auto flex max-w-6xl gap-1 overflow-x-auto px-4 pb-2">

@@ -83,6 +83,7 @@ class ProtocolTelemetry(BaseModel):
     motor_status: ProtocolMotorStatus = Field(default_factory=ProtocolMotorStatus)
     uptime_ms: int | None = None
     firmware_version: str | None = None
+    emergency_stopped: bool = False
 
 
 class CommandAction(str, Enum):

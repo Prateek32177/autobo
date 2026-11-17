@@ -29,7 +29,7 @@ class DistanceSensorComponent(ComponentAdapter):
         ]
 
     async def ingest_telemetry(self, payload: dict[str, Any]) -> ComponentObservation | None:
-        if "distance_cm" not in payload:
+        if payload.get("distance_cm") is None:
             return None
         value = float(payload["distance_cm"])
         obs = self._observe({"distance_cm": value}, raw=payload)

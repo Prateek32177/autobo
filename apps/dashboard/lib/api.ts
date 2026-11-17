@@ -15,7 +15,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   });
   if (!response.ok) {
     const detail = await response.text();
-    throw new Error(detail || `Request failed: ${response.status}`);
+    try {
+      const parsed = JSON.parse(detail) as { detail?: string };
+      throw new Error(parsed.detail || detail || `Request failed: ${response.status}`);
+    } catch (err) {
+      if (err instanceof Error && err.message !== detail) throw err;
+      throw new Error(detail || `Request failed: ${response.status}`);
+    }
   }
   if (response.status === 204) {
     return undefined as T;
@@ -32,12 +38,40 @@ export function getWsUrl(): string {
   return `${base}/ws`;
 }
 
+async function readyRequest(): Promise<{
+  ready: boolean;
+  database: string;
+  detail: string;
+}> {
+  const response = await fetch(`${API_BASE}/ready`, { cache: "no-store" });
+  const body = (await response.json()) as {
+    ready: boolean;
+    database: string;
+    detail: string;
+  };
+  if (!response.ok && response.status !== 503) {
+    throw new Error(body.detail || `Ready check failed: ${response.status}`);
+  }
+  return body;
+}
+
 export const api = {
-  health: () => request<{ status: string }>("/api/health"),
+  health: () => request<{ status: string }>("/health"),
+  ready: () => readyRequest(),
   meta: () => request<RuntimeMeta>("/api/meta"),
   listDevices: () => request<DeviceSummary[]>("/api/devices"),
   getDevice: (id: string) => request<Device>(`/api/devices/${id}`),
   getHealth: (id: string) => request<DeviceHealth>(`/api/devices/${id}/health`),
+  listDiagnosticEvents: (deviceId?: string) =>
+    request<{ device_id?: string; events: unknown[]; note?: string }>(
+      deviceId
+        ? `/api/devices/${deviceId}/diagnostics`
+        : "/api/diagnostics/events",
+    ),
+  listPorts: () =>
+    request<{ ports: Array<Record<string, unknown>>; note?: string }>(
+      "/api/hardware/ports",
+    ),
   connect: (deviceId: string) =>
     request<Device>("/api/hardware/connect", {
       method: "POST",
@@ -49,7 +83,13 @@ export const api = {
       body: JSON.stringify({ device_id: deviceId }),
     }),
   emergencyStop: (deviceId?: string) =>
-    request<{ stopped: string[] }>("/api/hardware/emergency-stop", {
+    request<{
+      status: string;
+      stopped: string[];
+      skipped?: Array<{ device_id: string; reason: string }>;
+      message: string;
+      emergency_stopped: boolean;
+    }>("/api/hardware/emergency-stop", {
       method: "POST",
       body: JSON.stringify({ device_id: deviceId ?? null }),
     }),

@@ -48,6 +48,9 @@ async def device_health(device_id: str, registry: RegistryDep) -> dict:
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     telemetry = registry.get_latest_telemetry(device_id)
+    emergency_stopped = device.id in registry._emergency_stopped or bool(
+        (telemetry or {}).get("emergency_stopped") or (telemetry or {}).get("stopped")
+    )
     return {
         "device_id": device.id,
         "connectivity_status": device.connectivity_status,
@@ -56,6 +59,7 @@ async def device_health(device_id: str, registry: RegistryDep) -> dict:
         "last_heartbeat_at": device.last_heartbeat_at,
         "is_simulation": device.connection.type.value == "simulation",
         "connection_mode": device.connection.type.value,
+        "emergency_stopped": emergency_stopped,
         "components": [
             {
                 "id": c.id,

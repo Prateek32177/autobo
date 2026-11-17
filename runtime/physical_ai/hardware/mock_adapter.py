@@ -97,8 +97,22 @@ class MockHardwareAdapter(HardwareAdapter):
 
     async def emergency_stop(self, reason: str = "operator") -> None:
         self._stopped = True
+        # Reflect immediately in motor component metrics (do not wait for next tick).
+        for key in ("left_motor", "right_motor"):
+            motor = self.component_registry.get(self.device_id, key)
+            if motor is not None:
+                motor._metrics["status"] = "idle"  # noqa: SLF001
         if self._session is not None:
             await self._session.emergency_stop(reason)
+        # Emit an immediate telemetry update so the dashboard reflects e-stop without delay.
+        snap = self.snapshot()
+        # Drop unset metrics so component adapters do not choke on None.
+        snap = {k: v for k, v in snap.items() if v is not None}
+        snap["emergency_stopped"] = True
+        snap["stopped"] = True
+        snap["motor_status"] = {"left": "idle", "right": "idle"}
+        await self.component_registry.dispatch_telemetry(self.device_id, snap)
+        await self._emit_telemetry(snap)
 
     async def _on_protocol_heartbeat(self, message: ProtocolHeartbeat) -> None:
         payload = message.model_dump()
@@ -111,10 +125,16 @@ class MockHardwareAdapter(HardwareAdapter):
     async def _on_protocol_telemetry(self, message: ProtocolTelemetry) -> None:
         payload = message.model_dump()
         payload["mode"] = self.mode
+        payload["emergency_stopped"] = bool(
+            payload.get("emergency_stopped") or self._stopped
+        )
+        payload["stopped"] = payload["emergency_stopped"]
         # motor_status may be a model
         motor = payload.get("motor_status")
         if hasattr(motor, "model_dump"):
             payload["motor_status"] = motor.model_dump()
+        if self._stopped:
+            payload["motor_status"] = {"left": "idle", "right": "idle"}
         await self.component_registry.dispatch_telemetry(self.device_id, payload)
         await self._emit_telemetry(payload)
 

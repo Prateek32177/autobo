@@ -83,4 +83,9 @@ async def emergency_stop(
     payload: EmergencyStopRequest | None = None,
 ) -> dict:
     device_id = payload.device_id if payload else None
-    return await registry.emergency_stop(device_id)
+    try:
+        return await registry.emergency_stop(device_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
