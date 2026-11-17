@@ -2,7 +2,7 @@
 
 Local-first developer platform for connecting physical hardware, observing component health, diagnosing failures, and running bounded AI-driven physical tasks.
 
-**Current milestone:** 1 — Local runtime foundation (simulated rover)
+**Current milestone:** 2 — Hardware architecture (transport / protocol / components) + ESP32 path
 
 ## Architecture (MVP)
 
@@ -53,15 +53,19 @@ make dashboard   # terminal 2
 make test
 ```
 
-## What Milestone 1 demonstrates
+## What Milestone 2 adds (preserves M1)
 
-1. FastAPI runtime bound to **localhost**
-2. SQLite persistence for devices, components, telemetry
-3. Device registry with a seeded **simulated** rover (`rover-sim-001`)
-4. Mock hardware adapter emitting heartbeat + telemetry
-5. Dashboard Overview / Devices showing component health and live sample telemetry
-6. Explicit **simulation** mode (never silently mistaken for real hardware)
-7. Serial adapter interface stubbed for Milestone 2 (ESP32)
+1. `TransportAdapter` (USB serial + in-memory for tests/mock)
+2. JSON Lines `ProtocolSession` (handshake, correlation, malformed handling)
+3. Real `ComponentAdapter`s for rover parts + `ComponentRegistry`
+4. `CapabilityRegistry` + dynamic AI tool generation
+5. Safety validator + action executor pipeline
+6. `Esp32HardwareAdapter` + firmware peer in `firmware/esp32`
+7. Mock still default; uses same component/capability contracts (not USB serial)
+
+### Milestone 1 still works
+
+Simulated rover seed, dashboard telemetry, localhost FastAPI, SQLite, explicit simulation mode.
 
 ## Repository layout
 

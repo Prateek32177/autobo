@@ -8,7 +8,7 @@
 
 ## 1. Phased implementation plan
 
-### Milestone 1 — Local runtime foundation *(current)*
+### Milestone 1 — Local runtime foundation *(done)*
 
 | Task | Deliverable |
 |---|---|
@@ -23,9 +23,10 @@
 
 **Exit criteria:** App starts locally; dashboard shows a simulated device with component health and sample telemetry.
 
-### Milestone 2 — ESP32 integration
+### Milestone 2 — Hardware architecture + ESP32 path *(current)*
 
-PlatformIO firmware, JSON Lines protocol, heartbeat/telemetry/commands, real serial adapter, live ESP32 telemetry on dashboard.
+Transport / protocol session / component adapter separation; CapabilityRegistry;
+Mock + Esp32HardwareAdapter sharing contracts; ESP32 firmware peer; safety + executor stubs.
 
 ### Milestone 3 — Observability and diagnostics
 

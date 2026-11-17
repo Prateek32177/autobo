@@ -11,14 +11,52 @@ from typing import Annotated, Any, Literal, Union
 
 from pydantic import BaseModel, Field
 
+PROTOCOL_VERSION = "1.0"
+
 
 class MessageType(str, Enum):
+    HANDSHAKE = "handshake"
+    HANDSHAKE_ACK = "handshake_ack"
     HEARTBEAT = "heartbeat"
     TELEMETRY = "telemetry"
     COMMAND = "command"
     COMMAND_ACK = "command_ack"
     COMMAND_RESULT = "command_result"
     EMERGENCY_STOP = "emergency_stop"
+    ERROR = "error"
+
+
+class ProtocolComponentInfo(BaseModel):
+    key: str
+    component_type: str
+    name: str | None = None
+
+
+class ProtocolCapabilityInfo(BaseModel):
+    name: str
+    component_key: str | None = None
+    description: str = ""
+    parameters_schema: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProtocolHandshake(BaseModel):
+    type: Literal["handshake"] = "handshake"
+    device_id: str
+    manufacturer: str = "physical-ai"
+    board: str = "esp32"
+    model: str = "autonomous_rover"
+    firmware_version: str
+    protocol_version: str = PROTOCOL_VERSION
+    supported_components: list[ProtocolComponentInfo] = Field(default_factory=list)
+    supported_capabilities: list[ProtocolCapabilityInfo] = Field(default_factory=list)
+
+
+class ProtocolHandshakeAck(BaseModel):
+    type: Literal["handshake_ack"] = "handshake_ack"
+    device_id: str
+    protocol_version: str = PROTOCOL_VERSION
+    status: Literal["accepted", "rejected"] = "accepted"
+    reason: str | None = None
 
 
 class ProtocolHeartbeat(BaseModel):
@@ -26,6 +64,7 @@ class ProtocolHeartbeat(BaseModel):
     device_id: str
     firmware_version: str
     uptime_ms: int
+    protocol_version: str = PROTOCOL_VERSION
 
 
 class ProtocolMotorStatus(BaseModel):
@@ -42,6 +81,8 @@ class ProtocolTelemetry(BaseModel):
     left_encoder: int
     right_encoder: int
     motor_status: ProtocolMotorStatus = Field(default_factory=ProtocolMotorStatus)
+    uptime_ms: int | None = None
+    firmware_version: str | None = None
 
 
 class CommandAction(str, Enum):
@@ -99,25 +140,50 @@ class ProtocolEmergencyStop(BaseModel):
     reason: str = "operator"
 
 
+class ProtocolError(BaseModel):
+    type: Literal["error"] = "error"
+    code: str
+    message: str
+    command_id: str | None = None
+
+
 ProtocolMessage = Annotated[
     Union[
+        ProtocolHandshake,
+        ProtocolHandshakeAck,
         ProtocolHeartbeat,
         ProtocolTelemetry,
         ProtocolCommand,
         ProtocolCommandAck,
         ProtocolCommandResult,
         ProtocolEmergencyStop,
+        ProtocolError,
     ],
     Field(discriminator="type"),
 ]
 
 
-def parse_protocol_line(line: str) -> ProtocolHeartbeat | ProtocolTelemetry | ProtocolCommand | ProtocolCommandAck | ProtocolCommandResult | ProtocolEmergencyStop:
+def parse_protocol_line(
+    line: str,
+) -> (
+    ProtocolHandshake
+    | ProtocolHandshakeAck
+    | ProtocolHeartbeat
+    | ProtocolTelemetry
+    | ProtocolCommand
+    | ProtocolCommandAck
+    | ProtocolCommandResult
+    | ProtocolEmergencyStop
+    | ProtocolError
+):
     """Parse a single JSON Lines protocol message."""
     import json
 
-    from pydantic import TypeAdapter
+    from pydantic import TypeAdapter, ValidationError
 
     data = json.loads(line)
     adapter: TypeAdapter[Any] = TypeAdapter(ProtocolMessage)
-    return adapter.validate_python(data)
+    try:
+        return adapter.validate_python(data)
+    except ValidationError as exc:
+        raise ValueError(f"Malformed protocol message: {exc}") from exc

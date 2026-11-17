@@ -1,4 +1,4 @@
-"""Device registry — tracks devices, components and live adapters."""
+"""Device registry — identity, lifecycle and hardware integration wiring."""
 
 from __future__ import annotations
 
@@ -6,10 +6,9 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
+from physical_ai.capabilities.registry import CapabilityRegistry
+from physical_ai.components.registry import ComponentRegistry
 from physical_ai.core.models import (
-    Capability,
-    Component,
-    ComponentType,
     ConnectionConfig,
     ConnectionType,
     ConnectivityStatus,
@@ -18,44 +17,16 @@ from physical_ai.core.models import (
     DeviceSummary,
     DeviceType,
     HealthStatus,
+    Component,
+    ComponentType,
 )
+from physical_ai.execution.executor import ActionExecutor
 from physical_ai.hardware.base import HardwareAdapter
+from physical_ai.hardware.esp32_adapter import Esp32HardwareAdapter
 from physical_ai.hardware.mock_adapter import MockHardwareAdapter
-from physical_ai.hardware.serial_adapter import SerialHardwareAdapter
+from physical_ai.hardware.protocol.session import ProtocolSessionError
+from physical_ai.hardware.transport.base import TransportError
 from physical_ai.storage.database import Database
-
-ROVER_CAPABILITIES = [
-    Capability(name="get_device_health", description="Overall device health"),
-    Capability(name="get_component_health", description="Per-component health"),
-    Capability(name="get_distance", description="Read distance sensor"),
-    Capability(
-        name="move_forward",
-        description="Move forward with bounded speed/duration",
-        parameters_schema={
-            "type": "object",
-            "properties": {
-                "speed": {"type": "number", "minimum": 0, "maximum": 0.4},
-                "duration_ms": {"type": "integer", "minimum": 0, "maximum": 3000},
-            },
-        },
-    ),
-    Capability(
-        name="move_backward",
-        description="Move backward with bounded speed/duration",
-        parameters_schema={
-            "type": "object",
-            "properties": {
-                "speed": {"type": "number", "minimum": 0, "maximum": 0.4},
-                "duration_ms": {"type": "integer", "minimum": 0, "maximum": 3000},
-            },
-        },
-    ),
-    Capability(name="turn_left", description="Turn left in place"),
-    Capability(name="turn_right", description="Turn right in place"),
-    Capability(name="stop", description="Stop motors"),
-    Capability(name="run_diagnostics", description="Run deterministic diagnostics"),
-]
-
 
 DEFAULT_ROVER_COMPONENTS: list[tuple[str, str, ComponentType, str]] = [
     ("controller", "ESP32 Controller", ComponentType.CONTROLLER, "esp32_controller"),
@@ -77,8 +48,21 @@ def _iso(dt: datetime | None) -> str | None:
 
 
 class DeviceRegistry:
-    def __init__(self, db: Database) -> None:
+    def __init__(
+        self,
+        db: Database,
+        *,
+        component_registry: ComponentRegistry | None = None,
+        capability_registry: CapabilityRegistry | None = None,
+    ) -> None:
         self.db = db
+        self.components = component_registry or ComponentRegistry()
+        self.capabilities = capability_registry or CapabilityRegistry()
+        self.executor = ActionExecutor(
+            capabilities=self.capabilities,
+            components=self.components,
+        )
+        self.mock_interval_seconds = 1.0
         self._adapters: dict[str, HardwareAdapter] = {}
         self._latest_telemetry: dict[str, dict[str, Any]] = {}
         self._event_subscribers: list[Any] = []
@@ -142,7 +126,7 @@ class DeviceRegistry:
     async def ensure_simulated_rover(self, device_id: str = "rover-sim-001") -> Device:
         existing = await self.db.get_device(device_id)
         if existing is None:
-            device = await self.register_device(
+            await self.register_device(
                 DeviceCreate(
                     name="Simulated Rover",
                     device_type=DeviceType.AUTONOMOUS_ROVER,
@@ -154,8 +138,6 @@ class DeviceRegistry:
                 ),
                 device_id=device_id,
             )
-        else:
-            device = await self.get_device(device_id)
 
         if device_id not in self._adapters or not await self._adapters[device_id].is_connected():
             await self.connect_device(device_id)
@@ -185,21 +167,31 @@ class DeviceRegistry:
         row = await self.db.get_device(device_id)
         if row is None:
             raise KeyError(f"Device not found: {device_id}")
-        components = [
-            Component(
-                id=c["id"],
-                device_id=c["device_id"],
-                name=c["name"],
-                component_type=ComponentType(c["component_type"]),
-                adapter_type=c["adapter_type"],
-                configuration=c["configuration"],
-                health_status=HealthStatus(c["health_status"]),
-                last_reading_at=_parse_dt(c["last_reading_at"]),
-                metrics=c["metrics"],
-                created_at=_parse_dt(c["created_at"]),
+
+        live = {c["id"]: c for c in self.components.metadata(device_id)}
+        components: list[Component] = []
+        for c in await self.db.list_components(device_id):
+            live_meta = live.get(c["id"])
+            components.append(
+                Component(
+                    id=c["id"],
+                    device_id=c["device_id"],
+                    name=c["name"],
+                    component_type=ComponentType(c["component_type"]),
+                    adapter_type=c["adapter_type"],
+                    configuration=c["configuration"],
+                    health_status=HealthStatus(
+                        (live_meta or c).get("health_status", c["health_status"])
+                    ),
+                    last_reading_at=_parse_dt(
+                        (live_meta or {}).get("last_reading_at") or c["last_reading_at"]
+                    ),
+                    metrics=(live_meta or {}).get("metrics") or c["metrics"],
+                    created_at=_parse_dt(c["created_at"]),
+                )
             )
-            for c in await self.db.list_components(device_id)
-        ]
+
+        capabilities = self.capabilities.list(device_id)
         return Device(
             id=row["id"],
             name=row["name"],
@@ -210,7 +202,7 @@ class DeviceRegistry:
             health_status=HealthStatus(row["health_status"]),
             last_heartbeat_at=_parse_dt(row["last_heartbeat_at"]),
             components=components,
-            capabilities=list(ROVER_CAPABILITIES),
+            capabilities=capabilities,
             created_at=_parse_dt(row["created_at"]),
             updated_at=_parse_dt(row["updated_at"]),
         )
@@ -231,27 +223,36 @@ class DeviceRegistry:
             adapter: HardwareAdapter = MockHardwareAdapter(
                 device_id=device_id,
                 firmware_version=device.firmware_version or "0.1.0-sim",
+                interval_seconds=self.mock_interval_seconds,
+                component_registry=self.components,
+                capability_registry=self.capabilities,
             )
         else:
             if not device.connection.port:
                 raise ValueError("Serial connection requires a port")
-            adapter = SerialHardwareAdapter(
+            adapter = Esp32HardwareAdapter(
+                device_id=device_id,
                 port=device.connection.port,
                 baud_rate=device.connection.baud_rate or 115200,
-                device_id=device_id,
+                component_registry=self.components,
+                capability_registry=self.capabilities,
             )
 
         adapter.on_heartbeat(lambda payload: self._handle_heartbeat(device_id, payload))
         adapter.on_telemetry(lambda payload: self._handle_telemetry(device_id, payload))
+        adapter.on_disconnect(lambda: self._handle_disconnect(device_id))
 
-        await adapter.connect()
+        try:
+            await adapter.connect()
+        except (TransportError, ProtocolSessionError, OSError) as exc:
+            raise ConnectionError(str(exc)) from exc
         self._adapters[device_id] = adapter
         await self.db.update_device_status(
             device_id,
             connectivity_status=ConnectivityStatus.CONNECTED.value,
             health_status=HealthStatus.HEALTHY.value,
         )
-        await self._set_all_components_health(device_id, HealthStatus.HEALTHY)
+        await self._persist_component_metadata(device_id)
         await self._broadcast(
             {
                 "type": "device_status",
@@ -272,7 +273,9 @@ class DeviceRegistry:
             connectivity_status=ConnectivityStatus.DISCONNECTED.value,
             health_status=HealthStatus.DISCONNECTED.value,
         )
-        await self._set_all_components_health(device_id, HealthStatus.DISCONNECTED)
+        for component in await self.db.list_components(device_id):
+            component["health_status"] = HealthStatus.DISCONNECTED.value
+            await self.db.upsert_component(component)
         await self._broadcast(
             {
                 "type": "device_status",
@@ -300,6 +303,25 @@ class DeviceRegistry:
         await self._broadcast({"type": "emergency_stop", "device_ids": stopped})
         return {"stopped": stopped}
 
+    async def invoke_capability(
+        self,
+        device_id: str,
+        capability: str,
+        parameters: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        adapter = self._adapters.get(device_id)
+        if adapter is None:
+            return {"status": "failed", "message": "Device not connected"}
+        device = await self.get_device(device_id)
+        healthy = device.health_status in (HealthStatus.HEALTHY, HealthStatus.DEGRADED)
+        return await self.executor.execute(
+            device_id,
+            capability,
+            parameters,
+            hardware=adapter,
+            device_healthy=healthy,
+        )
+
     async def _handle_heartbeat(self, device_id: str, payload: dict[str, Any]) -> None:
         now = _utcnow().isoformat()
         await self.db.update_device_status(
@@ -309,83 +331,73 @@ class DeviceRegistry:
             firmware_version=payload.get("firmware_version"),
             last_heartbeat_at=now,
         )
+        await self._persist_component_metadata(device_id)
         await self._broadcast({"type": "heartbeat", **payload, "received_at": now})
 
     async def _handle_telemetry(self, device_id: str, payload: dict[str, Any]) -> None:
+        """Persist observations already interpreted by component adapters."""
         now = _utcnow().isoformat()
         self._latest_telemetry[device_id] = {**payload, "received_at": now}
 
-        metric_map = {
-            "battery_voltage": (f"{device_id}:battery", "battery_voltage"),
-            "distance_cm": (f"{device_id}:distance_sensor", "distance_cm"),
-            "left_encoder": (f"{device_id}:left_encoder", "ticks"),
-            "right_encoder": (f"{device_id}:right_encoder", "ticks"),
-        }
-        for metric_name, (component_id, metric_key) in metric_map.items():
-            if metric_name in payload:
+        for meta in self.components.metadata(device_id):
+            for metric_name, metric_value in (meta.get("metrics") or {}).items():
                 await self.db.insert_telemetry(
                     device_id=device_id,
-                    component_id=component_id,
+                    component_id=meta["id"],
                     metric_name=metric_name,
-                    metric_value=payload[metric_name],
+                    metric_value=metric_value,
                     timestamp=now,
                 )
-                await self._patch_component_metrics(
-                    component_id,
-                    health=HealthStatus.HEALTHY,
-                    last_reading_at=now,
-                    metrics={metric_key: payload[metric_name]},
-                )
-
-        motor_status = payload.get("motor_status") or {}
-        for motor, side in (("left_motor", "left"), ("right_motor", "right")):
-            await self._patch_component_metrics(
-                f"{device_id}:{motor}",
-                health=HealthStatus.HEALTHY,
-                last_reading_at=now,
-                metrics={"status": motor_status.get(side, "idle")},
+            await self.db.upsert_component(
+                {
+                    "id": meta["id"],
+                    "device_id": device_id,
+                    "name": meta["name"],
+                    "component_type": meta["component_type"],
+                    "adapter_type": meta["adapter_type"],
+                    "configuration": {},
+                    "health_status": meta["health_status"],
+                    "last_reading_at": meta.get("last_reading_at"),
+                    "metrics": meta.get("metrics") or {},
+                    "created_at": now,
+                }
             )
-
-        await self._patch_component_metrics(
-            f"{device_id}:controller",
-            health=HealthStatus.HEALTHY,
-            last_reading_at=now,
-            metrics={
-                "uptime_ms": payload.get("uptime_ms"),
-                "firmware_version": payload.get("firmware_version"),
-                "mode": payload.get("mode", "simulation"),
-            },
-        )
 
         await self._broadcast({"type": "telemetry", **payload, "received_at": now})
 
-    async def _patch_component_metrics(
-        self,
-        component_id: str,
-        *,
-        health: HealthStatus,
-        last_reading_at: str,
-        metrics: dict[str, Any],
-    ) -> None:
-        device_id = component_id.split(":", 1)[0]
-        existing = None
-        for component in await self.db.list_components(device_id):
-            if component["id"] == component_id:
-                existing = component
-                break
-        if existing is None:
-            return
-        existing["health_status"] = health.value
-        existing["last_reading_at"] = last_reading_at
-        merged = dict(existing.get("metrics") or {})
-        merged.update(metrics)
-        existing["metrics"] = merged
-        await self.db.upsert_component(existing)
+    async def _handle_disconnect(self, device_id: str) -> None:
+        await self.db.update_device_status(
+            device_id,
+            connectivity_status=ConnectivityStatus.DISCONNECTED.value,
+            health_status=HealthStatus.DISCONNECTED.value,
+        )
+        await self._broadcast(
+            {
+                "type": "device_status",
+                "device_id": device_id,
+                "connectivity_status": ConnectivityStatus.DISCONNECTED.value,
+                "health_status": HealthStatus.DISCONNECTED.value,
+                "reason": "communication_lost",
+            }
+        )
 
-    async def _set_all_components_health(self, device_id: str, status: HealthStatus) -> None:
-        for component in await self.db.list_components(device_id):
-            component["health_status"] = status.value
-            await self.db.upsert_component(component)
+    async def _persist_component_metadata(self, device_id: str) -> None:
+        now = _utcnow().isoformat()
+        for meta in self.components.metadata(device_id):
+            await self.db.upsert_component(
+                {
+                    "id": meta["id"],
+                    "device_id": device_id,
+                    "name": meta["name"],
+                    "component_type": meta["component_type"],
+                    "adapter_type": meta["adapter_type"],
+                    "configuration": {},
+                    "health_status": meta["health_status"],
+                    "last_reading_at": meta.get("last_reading_at"),
+                    "metrics": meta.get("metrics") or {},
+                    "created_at": now,
+                }
+            )
 
 
 def _parse_dt(value: str | None) -> datetime | None:

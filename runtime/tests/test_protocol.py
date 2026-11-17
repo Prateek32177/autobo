@@ -12,6 +12,28 @@ from contracts.protocol import (
 )
 
 
+def test_parse_handshake_line() -> None:
+    line = json.dumps(
+        {
+            "type": "handshake",
+            "device_id": "rover-001",
+            "manufacturer": "physical-ai",
+            "board": "esp32",
+            "model": "autonomous_rover",
+            "firmware_version": "0.2.0",
+            "protocol_version": "1.0",
+            "supported_components": [
+                {"key": "battery", "component_type": "battery"},
+            ],
+        }
+    )
+    from contracts.protocol import ProtocolHandshake
+
+    msg = parse_protocol_line(line)
+    assert isinstance(msg, ProtocolHandshake)
+    assert msg.protocol_version == "1.0"
+
+
 def test_parse_heartbeat_line() -> None:
     line = json.dumps(
         {

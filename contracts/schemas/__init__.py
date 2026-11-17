@@ -11,6 +11,7 @@ from .device import (
     DeviceType,
     HealthStatus,
 )
+from .health import ComponentHealthReport, ComponentObservation, HealthEvidence
 from .telemetry import (
     DeviceTelemetry,
     DiagnosticCode,
@@ -23,6 +24,10 @@ from .telemetry import (
 )
 
 __all__ = [
+    "ComponentHealthReport",
+    "ComponentObservation",
+    "HealthEvidence",
+
     "Capability",
     "Component",
     "ComponentType",

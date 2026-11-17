@@ -39,8 +39,9 @@ async def test_meta_marks_simulation_milestone(client: AsyncClient) -> None:
     response = await client.get("/api/meta")
     assert response.status_code == 200
     body = response.json()
-    assert body["milestone"] == 1
-    assert body["serial_ready"] is False
+    assert body["milestone"] == 2
+    assert body["serial_ready"] is True
+    assert body["architecture"]["protocol_session"] is True
 
 
 @pytest.mark.asyncio
@@ -101,14 +102,14 @@ async def test_emergency_stop(client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
-async def test_serial_connect_not_implemented(client: AsyncClient) -> None:
+async def test_serial_connect_fails_without_device(client: AsyncClient) -> None:
     create = await client.post(
         "/api/devices",
         json={
             "name": "Real Port Placeholder",
             "connection": {
                 "type": "serial",
-                "port": "/dev/null",
+                "port": "/dev/does-not-exist-physical-ai",
                 "baud_rate": 115200,
             },
         },
@@ -116,4 +117,5 @@ async def test_serial_connect_not_implemented(client: AsyncClient) -> None:
     assert create.status_code == 201
     device_id = create.json()["id"]
     connect = await client.post("/api/hardware/connect", json={"device_id": device_id})
-    assert connect.status_code == 501
+    assert connect.status_code == 502
+

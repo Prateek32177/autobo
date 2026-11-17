@@ -27,6 +27,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     db = Database(settings.database_path, settings.telemetry_retention_rows)
     await db.connect()
     registry = DeviceRegistry(db)
+    registry.mock_interval_seconds = settings.mock_telemetry_interval_seconds
     registry.subscribe(ws_manager.broadcast)
 
     app.state.db = db
@@ -86,11 +87,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/meta")
     async def meta() -> dict[str, Any]:
         return {
-            "milestone": 1,
+            "milestone": 2,
             "hardware_modes": ["simulation", "serial"],
-            "serial_ready": False,
+            "serial_ready": True,
             "ai_ready": False,
-            "note": "Milestone 1 uses an explicitly simulated device by default.",
+            "architecture": {
+                "transport": True,
+                "protocol_session": True,
+                "component_adapters": True,
+                "capability_registry": True,
+                "action_executor": True,
+            },
+            "note": (
+                "Milestone 2: transport/protocol/component separation. "
+                "Default device remains an explicit simulation; ESP32 uses serial+handshake."
+            ),
         }
 
     return app

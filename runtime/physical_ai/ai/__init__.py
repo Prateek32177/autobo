@@ -1,1 +1,3 @@
-"""AI engine placeholders (Milestone 4)."""
+from .tools import tools_from_capabilities
+
+__all__ = ["tools_from_capabilities"]

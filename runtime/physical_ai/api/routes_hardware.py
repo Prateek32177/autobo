@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 from fastapi import APIRouter, HTTPException
@@ -29,8 +31,14 @@ class EmergencyStopRequest(BaseModel):
 async def get_ports() -> dict:
     return {
         "ports": list_serial_ports(),
-        "note": "Serial ESP32 transport lands in Milestone 2. Use simulation mode for M1.",
+        "note": "ESP32 USB serial transport is available. Simulation remains the default local mode.",
     }
+
+
+class InvokeRequest(BaseModel):
+    device_id: str = Field(min_length=1)
+    capability: str = Field(min_length=1)
+    parameters: dict[str, Any] | None = None
 
 
 @router.post("/connect", response_model=Device)
@@ -43,6 +51,22 @@ async def connect(payload: ConnectRequest, registry: RegistryDep) -> Device:
         raise HTTPException(status_code=501, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ConnectionError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@router.post("/invoke")
+async def invoke_capability(payload: InvokeRequest, registry: RegistryDep) -> dict:
+    try:
+        await registry.get_device(payload.device_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return await registry.invoke_capability(
+        payload.device_id,
+        payload.capability,
+        payload.parameters,
+    )
+
 
 
 @router.post("/disconnect", response_model=Device)

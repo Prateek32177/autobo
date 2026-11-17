@@ -1,12 +1,16 @@
 """Runtime re-exports of shared contracts for convenience."""
 
 from contracts.protocol import (
+    PROTOCOL_VERSION,
     AckStatus,
     CommandAction,
     ProtocolCommand,
     ProtocolCommandAck,
     ProtocolCommandResult,
     ProtocolEmergencyStop,
+    ProtocolError,
+    ProtocolHandshake,
+    ProtocolHandshakeAck,
     ProtocolHeartbeat,
     ProtocolTelemetry,
     ResultStatus,
@@ -15,6 +19,8 @@ from contracts.protocol import (
 from contracts.schemas import (
     Capability,
     Component,
+    ComponentHealthReport,
+    ComponentObservation,
     ComponentType,
     ConnectionConfig,
     ConnectionType,
@@ -27,6 +33,7 @@ from contracts.schemas import (
     DiagnosticCode,
     DiagnosticEvent,
     ExecutionEvent,
+    HealthEvidence,
     HealthStatus,
     Heartbeat,
     MotorStatus,
@@ -35,10 +42,13 @@ from contracts.schemas import (
 )
 
 __all__ = [
+    "PROTOCOL_VERSION",
     "AckStatus",
     "Capability",
     "CommandAction",
     "Component",
+    "ComponentHealthReport",
+    "ComponentObservation",
     "ComponentType",
     "ConnectionConfig",
     "ConnectionType",
@@ -51,6 +61,7 @@ __all__ = [
     "DiagnosticCode",
     "DiagnosticEvent",
     "ExecutionEvent",
+    "HealthEvidence",
     "HealthStatus",
     "Heartbeat",
     "MotorStatus",
@@ -58,6 +69,9 @@ __all__ = [
     "ProtocolCommandAck",
     "ProtocolCommandResult",
     "ProtocolEmergencyStop",
+    "ProtocolError",
+    "ProtocolHandshake",
+    "ProtocolHandshakeAck",
     "ProtocolHeartbeat",
     "ProtocolTelemetry",
     "ResultStatus",
