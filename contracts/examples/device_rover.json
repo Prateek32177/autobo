@@ -1,0 +1,19 @@
+{
+  "device_id": "rover-sim-001",
+  "name": "Simulated Rover",
+  "device_type": "autonomous_rover",
+  "connection": {
+    "type": "simulation",
+    "simulation_profile": "default_rover"
+  },
+  "firmware_version": "0.1.0-sim",
+  "components": [
+    "controller",
+    "distance_sensor",
+    "left_motor",
+    "right_motor",
+    "left_encoder",
+    "right_encoder",
+    "battery"
+  ]
+}

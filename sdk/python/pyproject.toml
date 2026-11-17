@@ -1,0 +1,10 @@
+[project]
+name = "physical-ai"
+version = "0.0.0"
+description = "Physical AI developer SDK (stub)"
+requires-python = ">=3.12"
+dependencies = []
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

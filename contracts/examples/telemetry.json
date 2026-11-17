@@ -1,0 +1,13 @@
+{
+  "type": "telemetry",
+  "device_id": "rover-sim-001",
+  "timestamp_ms": 120500,
+  "battery_voltage": 7.4,
+  "distance_cm": 35,
+  "left_encoder": 120,
+  "right_encoder": 118,
+  "motor_status": {
+    "left": "idle",
+    "right": "idle"
+  }
+}

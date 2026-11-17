@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+runtime/data/
+*.db
+
+# Node
+node_modules/
+.next/
+out/
+dist/
+coverage/
+*.tsbuildinfo
+
+# Env / secrets
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Firmware / PlatformIO
+firmware/**/.pio/
+firmware/**/.vscode/
+
+# Misc
+*.log
+.turbo/
