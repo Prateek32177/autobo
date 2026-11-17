@@ -39,6 +39,7 @@ firmware/**/.vscode/
 .turbo/
 .run/
 logs/
+.run/ttyVESP32-*
 
 # Local app data
 data/

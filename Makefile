@@ -1,4 +1,4 @@
-.PHONY: setup start stop status doctor runtime dashboard test test-runtime test-dashboard test-sdk build-dashboard dev
+.PHONY: setup start stop status doctor runtime dashboard test test-runtime test-dashboard test-sdk build-dashboard dev virtual-esp32 virtual-esp32-stop
 
 setup:
 	./scripts/setup.sh
@@ -37,3 +37,9 @@ test-sdk:
 
 build-dashboard:
 	cd apps/dashboard && npm run build
+
+virtual-esp32:
+	./scripts/virtual_esp32_start.sh
+
+virtual-esp32-stop:
+	./scripts/virtual_esp32_stop.sh

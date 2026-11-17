@@ -2,15 +2,14 @@
  * Physical AI ESP32 firmware peer — Milestone 2
  *
  * USB Serial @ 115200, JSON Lines protocol v1.0
- * - handshake, heartbeat, telemetry
- * - command / command_ack / command_result
- * - emergency_stop + motor command timeout + watchdog
+ * Aligned with contracts/protocol/messages.py and firmware/virtual_esp32.
  *
  * Does NOT call an LLM. Stops motors on host disconnect / timeout.
  */
 
 #include <Arduino.h>
 #include <ArduinoJson.h>
+#include <string.h>
 
 static const char *DEVICE_ID = "rover-001";
 static const char *FIRMWARE_VERSION = "0.2.0";
@@ -23,16 +22,31 @@ static unsigned long last_heartbeat_ms = 0;
 static unsigned long last_host_ms = 0;
 static unsigned long motor_deadline_ms = 0;
 static bool motors_active = false;
+static bool emergency_stopped = false;
 static int left_encoder = 0;
 static int right_encoder = 0;
 static float battery_voltage = 7.4f;
 static float distance_cm = 35.0f;
+static const char *left_dir = "idle";
+static const char *right_dir = "idle";
 String line_buf;
 
-void stopMotors(const char *reason) {
+bool isSupportedAction(const char *action) {
+  return strcmp(action, "move_forward") == 0 || strcmp(action, "move_backward") == 0 ||
+         strcmp(action, "turn_left") == 0 || strcmp(action, "turn_right") == 0 ||
+         strcmp(action, "stop") == 0 || strcmp(action, "emergency_stop") == 0 ||
+         strcmp(action, "read_distance") == 0 || strcmp(action, "read_battery") == 0 ||
+         strcmp(action, "read_encoders") == 0;
+}
+
+void stopMotors(const char *reason, bool emergency) {
   motors_active = false;
   motor_deadline_ms = 0;
-  // Hook motor driver pins here in hardware bring-up.
+  left_dir = "idle";
+  right_dir = "idle";
+  if (emergency) {
+    emergency_stopped = true;
+  }
   (void)reason;
 }
 
@@ -62,6 +76,14 @@ void sendHandshake() {
     c["key"] = keys[i];
     c["component_type"] = types[i];
   }
+  JsonArray caps = doc["supported_capabilities"].to<JsonArray>();
+  const char *actions[] = {
+      "move_forward", "move_backward", "turn_left", "turn_right", "stop",
+      "emergency_stop", "read_distance", "read_battery", "read_encoders"};
+  for (size_t i = 0; i < 9; i++) {
+    JsonObject a = caps.add<JsonObject>();
+    a["name"] = actions[i];
+  }
   sendJson(doc);
 }
 
@@ -86,28 +108,61 @@ void sendTelemetry() {
   doc["right_encoder"] = right_encoder;
   doc["uptime_ms"] = millis();
   doc["firmware_version"] = FIRMWARE_VERSION;
+  doc["emergency_stopped"] = emergency_stopped;
   JsonObject motors = doc["motor_status"].to<JsonObject>();
-  motors["left"] = motors_active ? "forward" : "idle";
-  motors["right"] = motors_active ? "forward" : "idle";
+  motors["left"] = left_dir;
+  motors["right"] = right_dir;
   sendJson(doc);
+}
+
+void sendAck(const char *command_id, const char *status, const char *reason) {
+  JsonDocument ack;
+  ack["type"] = "command_ack";
+  ack["command_id"] = command_id;
+  ack["status"] = status;
+  if (reason != nullptr) {
+    ack["reason"] = reason;
+  }
+  sendJson(ack);
 }
 
 void handleCommand(JsonDocument &doc) {
   const char *command_id = doc["command_id"] | "unknown";
   const char *action = doc["action"] | "";
 
-  JsonDocument ack;
-  ack["type"] = "command_ack";
-  ack["command_id"] = command_id;
-  ack["status"] = "accepted";
-  sendJson(ack);
+  if (!isSupportedAction(action)) {
+    sendAck(command_id, "rejected", "unsupported action");
+    JsonDocument result;
+    result["type"] = "command_result";
+    result["command_id"] = command_id;
+    result["status"] = "failed";
+    result["message"] = "unsupported action";
+    sendJson(result);
+    return;
+  }
+
+  if (emergency_stopped &&
+      !(strcmp(action, "stop") == 0 || strcmp(action, "emergency_stop") == 0 ||
+        strcmp(action, "read_distance") == 0 || strcmp(action, "read_battery") == 0 ||
+        strcmp(action, "read_encoders") == 0)) {
+    sendAck(command_id, "rejected", "emergency stop latch active");
+    JsonDocument result;
+    result["type"] = "command_result";
+    result["command_id"] = command_id;
+    result["status"] = "failed";
+    result["message"] = "emergency stop latch active";
+    sendJson(result);
+    return;
+  }
+
+  sendAck(command_id, "accepted", nullptr);
 
   JsonDocument result;
   result["type"] = "command_result";
   result["command_id"] = command_id;
 
   if (strcmp(action, "stop") == 0 || strcmp(action, "emergency_stop") == 0) {
-    stopMotors(action);
+    stopMotors(action, strcmp(action, "emergency_stop") == 0);
     result["status"] = "completed";
     result["left_encoder_delta"] = 0;
     result["right_encoder_delta"] = 0;
@@ -129,40 +184,83 @@ void handleCommand(JsonDocument &doc) {
     return;
   }
 
+  if (strcmp(action, "read_encoders") == 0) {
+    result["status"] = "completed";
+    result["left_encoder_delta"] = 0;
+    result["right_encoder_delta"] = 0;
+    char msg[64];
+    snprintf(msg, sizeof(msg), "left=%d,right=%d", left_encoder, right_encoder);
+    result["message"] = msg;
+    sendJson(result);
+    return;
+  }
+
   float speed = doc["parameters"]["speed"] | 0.15f;
   int duration_ms = doc["parameters"]["duration_ms"] | 500;
   if (speed > 0.4f) speed = 0.4f;
   if (duration_ms > 3000) duration_ms = 3000;
   if (duration_ms < 0) duration_ms = 0;
 
-  if (strcmp(action, "move_forward") == 0 || strcmp(action, "move_backward") == 0 ||
-      strcmp(action, "turn_left") == 0 || strcmp(action, "turn_right") == 0) {
-    motors_active = true;
-    motor_deadline_ms = millis() + (unsigned long)duration_ms;
-    if (motor_deadline_ms - millis() > MOTOR_TIMEOUT_MS) {
-      motor_deadline_ms = millis() + MOTOR_TIMEOUT_MS;
-    }
-    int delta = (int)(speed * duration_ms / 10.0f);
-    if (strcmp(action, "move_backward") == 0) delta = -delta;
-    left_encoder += delta;
-    right_encoder += delta;
-    result["status"] = "completed";
-    result["left_encoder_delta"] = delta;
-    result["right_encoder_delta"] = delta;
-    sendJson(result);
-    return;
+  int ticks = (int)(speed * duration_ms / 10.0f);
+  int left_delta = 0;
+  int right_delta = 0;
+
+  if (strcmp(action, "move_forward") == 0) {
+    left_delta = right_delta = ticks;
+    left_dir = "forward";
+    right_dir = "forward";
+  } else if (strcmp(action, "move_backward") == 0) {
+    left_delta = right_delta = -ticks;
+    left_dir = "backward";
+    right_dir = "backward";
+  } else if (strcmp(action, "turn_left") == 0) {
+    left_delta = -ticks;
+    right_delta = ticks;
+    left_dir = "backward";
+    right_dir = "forward";
+  } else if (strcmp(action, "turn_right") == 0) {
+    left_delta = ticks;
+    right_delta = -ticks;
+    left_dir = "forward";
+    right_dir = "backward";
   }
 
-  result["status"] = "failed";
-  result["message"] = "unsupported action";
+  motors_active = duration_ms > 0;
+  motor_deadline_ms = millis() + (unsigned long)duration_ms;
+  if ((motor_deadline_ms - millis()) > MOTOR_TIMEOUT_MS) {
+    motor_deadline_ms = millis() + MOTOR_TIMEOUT_MS;
+  }
+  left_encoder += left_delta;
+  right_encoder += right_delta;
+  result["status"] = "completed";
+  result["left_encoder_delta"] = left_delta;
+  result["right_encoder_delta"] = right_delta;
   sendJson(result);
 }
 
+void handleEmergencyStopMessage(JsonDocument &doc) {
+  const char *command_id = doc["command_id"] | nullptr;
+  const char *reason = doc["reason"] | "operator";
+  stopMotors(reason, true);
+  if (command_id != nullptr && strlen(command_id) > 0) {
+    sendAck(command_id, "accepted", nullptr);
+    JsonDocument result;
+    result["type"] = "command_result";
+    result["command_id"] = command_id;
+    result["status"] = "completed";
+    result["left_encoder_delta"] = 0;
+    result["right_encoder_delta"] = 0;
+    result["message"] = "emergency_stop";
+    sendJson(result);
+  }
+  sendTelemetry();
+}
+
 void handleLine(const String &line) {
-  last_host_ms = millis();
   JsonDocument doc;
   DeserializationError err = deserializeJson(doc, line);
   if (err) {
+    // Malformed messages must NOT refresh the host watchdog.
     JsonDocument error;
     error["type"] = "error";
     error["code"] = "MALFORMED_MESSAGE";
@@ -171,13 +269,16 @@ void handleLine(const String &line) {
     return;
   }
 
+  // Only valid protocol frames keep the watchdog satisfied.
+  last_host_ms = millis();
+
   const char *type = doc["type"] | "";
   if (strcmp(type, "command") == 0) {
     handleCommand(doc);
   } else if (strcmp(type, "emergency_stop") == 0) {
-    stopMotors("emergency_stop");
+    handleEmergencyStopMessage(doc);
   } else if (strcmp(type, "handshake_ack") == 0) {
-    // Host accepted/rejected protocol version — nothing else required.
+    // Host accepted/rejected protocol version.
   }
 }
 
@@ -208,10 +309,10 @@ void loop() {
 
   unsigned long now = millis();
   if (motors_active && motor_deadline_ms != 0 && now >= motor_deadline_ms) {
-    stopMotors("motor_timeout");
+    stopMotors("motor_timeout", false);
   }
   if (now - last_host_ms > WATCHDOG_MS) {
-    stopMotors("watchdog");
+    stopMotors("watchdog", true);
   }
   if (now - last_heartbeat_ms >= HEARTBEAT_MS) {
     last_heartbeat_ms = now;

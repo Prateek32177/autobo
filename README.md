@@ -102,6 +102,20 @@ Runtime package (`physical_ai`) ≠ SDK package (`physical_ai_sdk`).
 
 Not required for local simulation. `/api/meta` reports `ai_ready: false`. Settings page shows that no LLM is configured.
 
+## Virtual ESP32 (serial path without a board)
+
+Exercises the **real** `SerialHardwareAdapter` path over a socat PTY pair (not MockHardwareAdapter):
+
+```bash
+brew install socat          # once
+./scripts/virtual_esp32_start.sh
+./scripts/start.sh
+# Register/connect a device with connection.type=serial and port=.run/ttyVESP32-host
+./scripts/virtual_esp32_stop.sh
+```
+
+Docs: [firmware/virtual_esp32/README.md](firmware/virtual_esp32/README.md)
+
 ## ESP32 preparation (no board required to start)
 
 - `pyserial` installed; `GET /api/hardware/ports` enumerates ports.
